@@ -1,93 +1,176 @@
+#include <WiFi.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
 #include <DHT.h>
 
-// ===== KHAI BAO CHAN =====
-//Đường truyền dữ liệu
-#define BMP_SDA    21
-//Tạo xung đồng hồ
-#define BMP_SCL    22
+// ================= WIFI =================
+const char* ssid = "P530";
+const char* password = "1234567890";
 
+// ================= JAVA TCP SERVER =================
+const char* serverIP = "192.168.1.14";
+const uint16_t serverPort = 5000;
 
-#define DHT_PIN    4
-#define DHT_TYPE   DHT11
+WiFiClient client;
 
-#define LIGHT_PIN  27
+// ================= SENSOR PINS =================
+#define BMP_SDA 21
+#define BMP_SCL 22
+#define DHT_PIN 4
+#define DHT_TYPE DHT11
+#define LIGHT_PIN 27
 
-// ===== KHOI TAO CAM BIEN =====
-//tạo đối tượng bmp để làm việc với cảm biến BMP280.
 Adafruit_BMP280 bmp;
-//tạo đối tượng DHT11 sử dụng GPIO 4.
 DHT dht(DHT_PIN, DHT_TYPE);
 
-//tạo biến kiểu Boolean, ban đầu là false, nghĩa là chưa xác nhận BMP280 hoạt động.
 bool bmpReady = false;
 
-void setup() {
-  Serial.begin(115200);
+// ================= WIFI CONNECTION =================
+void connectWiFi() {
+    Serial.print("Dang ket noi Wi-Fi");
 
-  // Khoi tao I2C cho BMP280
-  //Đường truyền dữ liệu SDA
-  //Tạo xung đồng hồ SCL
-  Wire.begin(BMP_SDA, BMP_SCL);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
 
-  // Thu dia chi I2C 0x76 va 0x77
-  if (bmp.begin(0x76)) {
-    bmpReady = true;
-  } else if (bmp.begin(0x77)) {
-    bmpReady = true;
-  }
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
 
-  // Khoi tao DHT11 va cam bien anh sang
-  dht.begin();  
-  //input vì dữ liệu cần lấy là DO chân 27
-  pinMode(LIGHT_PIN, INPUT);
-
-  Serial.println("\n=== ESP32 SENSOR TEST ===");
-
-  //kiểm tra xem BMP280 có hoạt động không
-  if (bmpReady) {
-    Serial.println("BMP280: OK");
-  } else {
-    Serial.println("BMP280: KHONG TIM THAY");
-    Serial.println("Kiem tra day SDA, SCL, VCC, GND");
-  }
+    Serial.println();
+    Serial.println("Wi-Fi da ket noi!");
+    Serial.print("IP ESP32: ");
+    Serial.println(WiFi.localIP());
 }
 
+// ================= TCP CONNECTION =================
+bool connectTCP() {
+    if (client.connected()) {
+        return true;
+    }
+
+    client.stop();
+
+    Serial.print("Dang ket noi Java Server: ");
+    Serial.print(serverIP);
+    Serial.print(":");
+    Serial.println(serverPort);
+
+    if (client.connect(serverIP, serverPort)) {
+        Serial.println("TCP ket noi thanh cong!");
+        return true;
+    }
+
+    Serial.println("TCP ket noi that bai!");
+    return false;
+}
+
+// ================= SETUP =================
+void setup() {
+    Serial.begin(115200);
+
+    Wire.begin(BMP_SDA, BMP_SCL);
+
+    if (bmp.begin(0x76)) {
+        bmpReady = true;
+    } else if (bmp.begin(0x77)) {
+        bmpReady = true;
+    }
+
+    dht.begin();
+    pinMode(LIGHT_PIN, INPUT);
+
+    Serial.println("\n=== AI SMART SPACE ===");
+
+    if (bmpReady) {
+        Serial.println("BMP280: OK");
+    } else {
+        Serial.println("BMP280: KHONG TIM THAY");
+    }
+
+    connectWiFi();
+    connectTCP();
+}
+
+// ================= MAIN LOOP =================
 void loop() {
-  Serial.println("\n-------- SENSOR DATA --------");
+    // Neu Wi-Fi mat ket noi, thu ket noi lai
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("Wi-Fi mat ket noi, dang thu lai...");
+        WiFi.disconnect();
+        WiFi.begin(ssid, password);
 
-  // 1. Nhiet do tu BMP280
-  if (bmpReady) {
-    float temperature = bmp.readTemperature();
+        unsigned long startTime = millis();
 
-    Serial.print("Nhiet do BMP280: ");
-    Serial.print(temperature, 2);
-    Serial.println(" *C");
-  } else {
-    Serial.println("Nhiet do BMP280: ERROR");
-  }
+        while (WiFi.status() != WL_CONNECTED &&
+               millis() - startTime < 10000) {
+            delay(500);
+            Serial.print(".");
+        }
 
-  // 2. Do am tu DHT11
-  float humidity = dht.readHumidity();
+        Serial.println();
+    }
 
-  if (isnan(humidity)) {
-    Serial.println("Do am DHT11: ERROR");
-  } else {
-    Serial.print("Do am DHT11: ");
-    Serial.print(humidity, 1);
-    Serial.println(" %");
-  }
+    // Doc nhiet do BMP280
+    float temperature = NAN;
 
-  // 3. Anh sang digital tu LM393
-  //đọc trạng thái logic tại GPIO 27.
-  int lightState = digitalRead(LIGHT_PIN);
+    if (bmpReady) {
+        temperature = bmp.readTemperature();
+    }
 
-  Serial.print("Anh sang DO: ");
-  Serial.println(lightState);
+    // Doc do am DHT11
+    float humidity = dht.readHumidity();
 
-  Serial.println("-----------------------------");
+    // Doc trang thai anh sang
+    int lightState = digitalRead(LIGHT_PIN);
 
-  delay(2000);
+    // In du lieu len Serial Monitor
+    Serial.println("\n------ SENSOR DATA ------");
+
+    Serial.print("Nhiet do: ");
+    if (isnan(temperature)) {
+        Serial.println("ERROR");
+    } else {
+        Serial.print(temperature, 2);
+        Serial.println(" C");
+    }
+
+    Serial.print("Do am: ");
+    if (isnan(humidity)) {
+        Serial.println("ERROR");
+    } else {
+        Serial.print(humidity, 1);
+        Serial.println(" %");
+    }
+
+    Serial.print("Anh sang: ");
+    Serial.println(lightState);
+
+    // Chi gui du lieu khi TCP da ket noi
+    if (WiFi.status() == WL_CONNECTED && connectTCP()) {
+        // Tao JSON hop le; gia tri loi se duoc gui thanh null
+        String json = "{";
+
+        json += "\"temperature\":";
+        json += isnan(temperature) ? "null" : String(temperature, 2);
+
+        json += ",\"humidity\":";
+        json += isnan(humidity) ? "null" : String(humidity, 1);
+
+        json += ",\"light\":";
+        json += String(lightState);
+
+        json += "}";
+
+        // println tu them ky tu xuong dong de Java readLine() doc duoc
+        client.println(json);
+
+        Serial.print("Da gui TCP: ");
+        Serial.println(json);
+    } else {
+        Serial.println("Chua gui duoc du lieu: TCP chua ket noi.");
+    }
+
+    delay(3000);
 }
